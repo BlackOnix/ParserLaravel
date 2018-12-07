@@ -2,7 +2,7 @@
 
 ## About
 
-Script for parsing "Directory of caloric content of food and dishes" from http://pbprog.ru
+App on Laravel for parsing "Directory of caloric content of food and dishes" from http://pbprog.ru
 
 
 ## Copyrights
