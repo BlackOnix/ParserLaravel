@@ -9,30 +9,42 @@ use Symfony\Component\DomCrawler\Crawler;
 
 class ApiController extends Controller
 {
+    /**
+     * Парсинг категорий
+     *
+     * @return string
+     */
+
     public function categoryParser(){
+        // Ссылка на страницу для парсинга
         $link = 'http://pbprog.ru/databases/foodmeals/';
         // Получаем html страницу ссылки
         $html = $this->curl_get($link, true);
-        // Создаем экземпляр парсера
+        // Создаем экземпляр парсера и добавляем html код
         $crawler = new Crawler(null, $link);
         $crawler->addHtmlContent($html);
 
-
+        // Достаем ссылки со страницы и начинаем перебор
         $cats = $crawler->filter('.main-column a')->each(function (Crawler $node, $i) {
             $link  = $node->attr('href');
+            // Берем только необходимые нам ссылки, исходя из регулярки
             if(preg_match('/\/databases\/foodmeals\/[0-9]/', $link)){
+                //Достаем ID категории
                 preg_match('/[0-9]+/', $link, $matches);
                 $ind_id = $matches[0];
                 $title = $node->text();
                 return compact('link', 'title', 'ind_id');
             }
         });
+
+        // Убираем из массива пустые элементы
         $cats = array_filter($cats, function($element) {
             return !empty($element);
         });
 
         //dd($cats);
 
+        // Перебираем полученный массив и заносим в БД
         foreach($cats as $c){
             Cats::firstOrCreate(['name' => $c['title'], 'ind_id' => $c['ind_id'], 'link' => $c['link']]);
         }
@@ -41,13 +53,24 @@ class ApiController extends Controller
 
     }
 
+    /**
+     * Парсинг продуктов
+     *
+     * @return bool|string
+     */
+
     public function productsParser(){
         ini_set('max_execution_time', 0);
 
+        // Домен для ссылок
         $domain = 'http://pbprog.ru';
+        // Достаем из бд все категории
         $cats = Cats::all();
+        // Если категории не спарсены, то прерываем
         if(!$cats) return false;
+        // Перебор категорий
         foreach($cats as $c){
+            // Преобразуем ссылку
             $link = $domain.$c->link;
             // Получаем html страницу ссылки
             $html = $this->curl_get($link, true);
@@ -55,42 +78,53 @@ class ApiController extends Controller
             $crawler = new Crawler(null, $link);
             $crawler->addHtmlContent($html);
 
+            // Достаем все ссылки в ul li и перебираем
             $products = $crawler->filter('.main-column ul li a')->each(function (Crawler $node, $i) {
                 $link  = $node->attr('href');
                 $title = $node->text();
                 return compact('link', 'title');
             });
 
+            // Убираем пустые элементы. Закомментировал т.к. считаю что из-за этого может тормозить выполнение
             /*$products = array_filter($products, function($element) {
                 return !empty($element);
             });*/
 
             foreach($products as $p){
-                if(isset($p)) {
+                // Проверяем элемент на пустоту
+                if(!empty($p)) {
+                    // Ищем продукт в бд
                     $f = Products::where('name', $p['title'])->first();
+                    // Если продукта нету в бд, то работаем
                     if (!$f) {
+                        // Получаем требуемую страницу
                         $html = $this->curl_get($domain . $p['link'], true);
                         // Создаем экземпляр парсера
                         $crawler = new Crawler(null, $link);
                         $crawler->addHtmlContent($html);
 
+                        // Достаем таблицу и перебираем
                         $table = $crawler->filter('.main-column #wt-table')->filter('tr')->each(function ($tr, $i) {
                             return $tr->filter('td')->each(function ($td, $i) {
                                 return trim($td->text());
                             });
                         });
 
+                        // Убираем пустые элементы. Закомментировал т.к. считаю что из-за этого может тормозить выполнение
                         /*$table = array_filter($table, function ($element) {
                             return !empty($element);
                         });*/
 
+                        // Преобразуем массив в вид 'Наименование' => 'Содержание питательных элементов'
                         $nt = array();
                         foreach ($table as $t) {
-                            if(isset($t[1])){
+                            // Проверяем на пустоту
+                            if(!empty($t[1])){
                                 $nt[$t[0]] = $t[1];
                             }
                         }
 
+                        // Добавляем продукт в базу
                         Products::firstOrCreate(['cat_id' => $c->ind_id, 'name' => $p['title'], 'data' => json_encode($nt), 'link' => $p['link']]);
                     }
                 }
@@ -101,12 +135,25 @@ class ApiController extends Controller
 
     }
 
+    /**
+     * Очищаем таблицы Категорий и Продуктов
+     *
+     * @return string
+     */
+
     public function truncate(){
         Cats::truncate();
         Products::truncate();
 
         return 'Finish';
     }
+
+    /**
+     * API для получения продуктов в категории
+     *
+     * @param $cat_id - ID категории
+     * @return mixed
+     */
 
     public function getProducts($cat_id){
         $products = Products::where('cat_id', $cat_id)->get();
@@ -118,7 +165,14 @@ class ApiController extends Controller
 
     }
 
-    private function curl_get($link, $encode = false){
+    /**
+     * CURL с преобразованием кодировки windows-1251 в utf-8
+     *
+     * @param $link - Ссылка на требуемый HTML
+     * @return string
+     */
+
+    private function curl_get($link){
         $ch = curl_init();
 
         curl_setopt($ch, CURLOPT_URL, $link);
